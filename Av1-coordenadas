@@ -32,6 +32,100 @@
             text-align: center;
             display: none; /* Oculto por defecto */
             max-width: 90%;
+            pointer-events: none; /* Permite clics "a través" si está visible pero no interactivo */
+        }
+
+        /* Estilos para el botón de cámara y la superposición de imagen */
+        #camera-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 2.5em; /* Tamaño del icono */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 11; /* Por encima de message-overlay */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            opacity: 0.8; /* Ligeramente transparente cuando no se usa */
+            transition: opacity 0.3s ease;
+        }
+
+        #camera-button:hover {
+            opacity: 1;
+        }
+
+        #image-modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.6); /* Fondo oscuro semitransparente para ver el mapa */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 12; /* Por encima de todo lo demás */
+            display: none; /* Oculto por defecto */
+        }
+
+        #image-modal-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: transparent; /* El fondo oscuro lo da el overlay */
+            padding: 0; /* Sin padding, la imagen y el spinner lo ocupan todo */
+        }
+
+        #destination-image {
+            max-width: 100%;
+            max-height: 80vh; /* La imagen ocupa el 80% de la altura de la pantalla */
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5); /* Sombra más pronunciada */
+            object-fit: contain; /* Asegura que la imagen se ajuste sin cortarse */
+            display: none; /* Oculto por defecto, se muestra cuando carga */
+        }
+
+        #close-image-button {
+            background-color: #f44336; /* Rojo */
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+            margin-top: 15px; /* Espacio entre la imagen y el botón */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        #close-image-button:hover {
+            background-color: #d32f2f; /* Rojo más oscuro al pasar el ratón */
+        }
+
+        /* Estilos para el spinner de carga */
+        .spinner {
+            border: 6px solid #f3f3f3; /* Light grey */
+            border-top: 6px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            display: none; /* Oculto por defecto */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -39,85 +133,203 @@
     <div id="map"></div>
     <div id="message-overlay">Cargando ubicación...</div>
 
+    <button id="camera-button" style="display: none;">📸</button>
+
+    <div id="image-modal-overlay">
+        <div id="image-modal-content">
+            <div id="image-spinner" class="spinner"></div> <img id="destination-image" src="" alt="Imagen del destino">
+            <button id="close-image-button" style="display: none;">Cerrar</button> </div>
+    </div>
+
     <script>
         let map;
         let directionsService;
         let directionsRenderer;
-        let currentTarget = null; // {lat, lon, radio, nombreParada}
+        let currentTarget = null; // {lat, lon, radio, nombreParada, waypoints, imagen}
         let watchId; // Para almacenar el ID del observador de geolocalización
         let arrivalSent = false; // Bandera para evitar enviar el mensaje de llegada múltiples veces
 
         const overlay = document.getElementById('message-overlay');
+        const cameraButton = document.getElementById('camera-button');
+        const imageModalOverlay = document.getElementById('image-modal-overlay');
+        const destinationImage = document.getElementById('destination-image');
+        const closeImageButton = document.getElementById('close-image-button');
+        const imageSpinner = document.getElementById('image-spinner');
 
-        // --- LISTA DE PARADAS PARA LA AVENTURA 1 ---
-        // Puedes cambiar, añadir o eliminar paradas aquí.
-        // Asegúrate de que las coordenadas (lat, lon) y el radio (en metros) sean correctos.
-        // Los radios los he establecido de forma estimada, puedes ajustarlos.
+        // --- LISTA DE PARADAS PARA LA AVENTURA 1 (¡CON WAYPOINTS E IMAGEN INCLUIDOS!) ---
+        // Este array define todas las paradas, los waypoints para llegar a ellas y la imagen asociada.
+        // Asegúrate de que las rutas de las imágenes sean correctas (ej. "img/nombre_foto.jpg")
         const paradasAventura = [
-            // PARADA 0: Inicio Torres de Serranos - Plaza de los Fueros
-            { nombreParada: "Torres de Serranos - Plaza de los Fueros (Inicio)", lat: 39.47876, lon: -0.37626, radio: 20 },
+            // PARADA 0: Torres de Serranos (start) Plaza de los Fueros
+            { nombreParada: "Torres de Serranos (start) Plaza de los Fueros", lat: 39.47876, lon: -0.37626, radio: 20,
+              waypoints: [{ lat: 39.47943, lon: -0.37636 }],
+              imagen: "img/torres_serranos.jpg" }, 
+            
             // PARADA 1: Puente de Serranos – Plaza de la Crida
-            { nombreParada: "Puente de Serranos – Plaza de la Crida", lat: 39.47959, lon: -0.37583, radio: 20 },
+            { nombreParada: "Puente de Serranos – Plaza de la Crida", lat: 39.47959, lon: -0.37583, radio: 20,
+              waypoints: [{ lat: 39.47939, lon: -0.3752 }],
+              imagen: "img/puente_serranos.jpg" }, 
+            
             // PARADA 2: Calle Muro Santa Ana
-            { nombreParada: "Calle Muro Santa Ana", lat: 39.47866, lon: -0.3747, radio: 15 },
+            { nombreParada: "Calle Muro Santa Ana", lat: 39.47866, lon: -0.3747, radio: 15,
+              waypoints: [],
+              imagen: "img/muro_santa_ana.jpg" }, 
+            
             // PARADA 3: Cortes Valencianas (Palacio de los Borgia)
-            { nombreParada: "Cortes Valencianas (Palacio de los Borgia)", lat: 39.47785, lon: -0.37485, radio: 15 },
+            { nombreParada: "Cortes Valencianas (Palacio de los Borgia)", lat: 39.47785, lon: -0.37485, radio: 15,
+              waypoints: [],
+              imagen: "img/palacio_borgia.jpg" }, 
+            
             // PARADA 4: Iglesia de San Lorenzo
-            { nombreParada: "Iglesia de San Lorenzo", lat: 39.47768, lon: -0.3749, radio: 15 },
+            { nombreParada: "Iglesia de San Lorenzo", lat: 39.47768, lon: -0.3749, radio: 15,
+              waypoints: [],
+              imagen: "img/iglesia_san_lorenzo.jpg" }, 
+            
             // PARADA 5: Plaza de la Virgen
-            { nombreParada: "Plaza de la Virgen", lat: 39.47656, lon: -0.37529, radio: 25 },
+            { nombreParada: "Plaza de la Virgen", lat: 39.47656, lon: -0.37529, radio: 25,
+              waypoints: [{ lat: 39.4766, lon: -0.37473 }],
+              imagen: "img/plaza_virgen.jpg" }, 
+            
             // PARADA 6: Plaza de la Almoína
-            { nombreParada: "Plaza de la Almoína", lat: 39.47609, lon: -0.37449, radio: 15 },
+            { nombreParada: "Plaza de la Almoína", lat: 39.47609, lon: -0.37449, radio: 15,
+              waypoints: [],
+              imagen: "img/plaza_almoina.jpg" }, 
+            
             // PARADA 7: Catedral de València
-            { nombreParada: "Catedral de València", lat: 39.47594, lon: -0.37474, radio: 10 },
+            { nombreParada: "Catedral de València", lat: 39.47594, lon: -0.37474, radio: 10,
+              waypoints: [],
+              imagen: "img/catedral_valencia.jpg" }, 
+            
             // PARADA 8: Plaza Decimo Juno Bruto (Museo Arqueológico de la Almoína)
-            { nombreParada: "Plaza Decimo Juno Bruto (Museo Arqueológico de la Almoína)", lat: 39.4762, lon: -0.37412, radio: 15 },
+            { nombreParada: "Plaza Decimo Juno Bruto (Museo Arqueológico de la Almoína)", lat: 39.4762, lon: -0.37412, radio: 15,
+              waypoints: [],
+              imagen: "img/museo_almoina.jpg" }, 
+            
             // PARADA 9: Basílica de València
-            { nombreParada: "Basílica de València", lat: 39.47611, lon: -0.37478, radio: 10 },
+            { nombreParada: "Basílica de València", lat: 39.47611, lon: -0.37478, radio: 10,
+              waypoints: [],
+              imagen: "img/basilica_valencia.jpg" }, 
+            
             // PARADA 10: Casa del Punt de Gantxo
-            { nombreParada: "Casa del Punt de Gantxo", lat: 39.47603, lon: -0.37433, radio: 10 },
+            { nombreParada: "Casa del Punt de Gantxo", lat: 39.47603, lon: -0.37433, radio: 10,
+              waypoints: [],
+              imagen: "img/punt_gantxo.jpg" }, 
+            
             // PARADA 11: Palacio Arzobispal
-            { nombreParada: "Palacio Arzobispal", lat: 39.4755, lon: -0.37436, radio: 10 },
+            { nombreParada: "Palacio Arzobispal", lat: 39.4755, lon: -0.37436, radio: 10,
+              waypoints: [],
+              imagen: "img/palacio_arzobispal.jpg" }, 
+            
             // PARADA 12: Puerta Románica de la Catedral
-            { nombreParada: "Puerta Románica de la Catedral", lat: 39.4756, lon: -0.37466, radio: 10 },
+            { nombreParada: "Puerta Románica de la Catedral", lat: 39.4756, lon: -0.37466, radio: 10,
+              waypoints: [],
+              imagen: "img/puerta_romanica.jpg" }, 
+            
             // PARADA 13: Torre del Miguelete
-            { nombreParada: "Torre del Miguelete", lat: 39.47533, lon: -0.37563, radio: 10 },
+            { nombreParada: "Torre del Miguelete", lat: 39.47533, lon: -0.37563, radio: 10,
+              waypoints: [
+                  { lat: 39.47514, lon: -0.37494 }, // Waypoint 4
+                  { lat: 39.47447, lon: -0.3754 },  // Waypoint 5
+                  { lat: 39.47212, lon: -0.37676 }   // Waypoint 6
+              ],
+              imagen: "img/miguelete.jpg" }, 
+            
             // PARADA 14: Plaza del Ayuntamiento
-            { nombreParada: "Plaza del Ayuntamiento", lat: 39.47056, lon: -0.37677, radio: 20 },
+            { nombreParada: "Plaza del Ayuntamiento", lat: 39.47056, lon: -0.37677, radio: 20,
+              waypoints: [],
+              imagen: "img/plaza_ayuntamiento.jpg" }, 
+            
             // PARADA 15: Edificio del Ayuntamiento de València
-            { nombreParada: "Edificio del Ayuntamiento de València", lat: 39.46971, lon: -0.37693, radio: 15 },
+            { nombreParada: "Edificio del Ayuntamiento de València", lat: 39.46971, lon: -0.37693, radio: 15,
+              waypoints: [{ lat: 39.46795, lon: -0.37701 }],
+              imagen: "img/ayuntamiento_edificio.jpg" }, 
+            
             // PARADA 16: Estación de Ferrocarril (Estación del Norte)
-            { nombreParada: "Estación de Ferrocarril (Estación del Norte)", lat: 39.46722, lon: -0.37702, radio: 30 },
+            { nombreParada: "Estación de Ferrocarril (Estación del Norte)", lat: 39.46722, lon: -0.37702, radio: 30,
+              waypoints: [],
+              imagen: "img/estacion_norte.jpg" }, 
+            
             // PARADA 17: Plaza de Toros de València
-            { nombreParada: "Plaza de Toros de València", lat: 39.46709, lon: -0.37595, radio: 30 },
+            { nombreParada: "Plaza de Toros de València", lat: 39.46709, lon: -0.37595, radio: 30,
+              waypoints: [{ lat: 39.46714, lon: -0.37498 }],
+              imagen: "img/plaza_toros.jpg" }, 
+            
             // PARADA 18: Casa estilo Árabe
-            { nombreParada: "Casa estilo Árabe", lat: 39.46753, lon: -0.37511, radio: 15 },
+            { nombreParada: "Casa estilo Árabe", lat: 39.46753, lon: -0.37511, radio: 15,
+              waypoints: [],
+              imagen: "img/casa_arabe.jpg" }, 
+            
             // PARADA 19: Palacio de Comunicaciones (Correos)
-            { nombreParada: "Palacio de Comunicaciones (Correos)", lat: 39.46942, lon: -0.37559, radio: 10 },
-            // PARADA 20: Antigua sede del Banco de València
-            { nombreParada: "Antigua sede del Banco de València", lat: 39.47061, lon: -0.37408, radio: 10 },
-            // PARADA 21: Edificio Suay (La Equitativa)
-            { nombreParada: "Edificio Suay (La Equitativa)", lat: 39.4699, lon: -0.37573, radio: 10 },
+            { nombreParada: "Palacio de Comunicaciones (Correos)", lat: 39.46942, lon: -0.37559, radio: 10,
+              waypoints: [],
+              imagen: "img/correos.jpg" }, 
+            
+            // PARADA 20: Edificio Suay (La Equitativa)
+            { nombreParada: "Edificio Suay (La Equitativa)", lat: 39.4699, lon: -0.37573, radio: 10,
+              waypoints: [
+                  { lat: 39.4703, lon: -0.3759 },    // Waypoint 9
+                  { lat: 39.47039, lon: -0.37505 }  // Waypoint 10
+              ],
+              imagen: "img/edificio_suay.jpg" }, 
+            
+            // PARADA 21: Antigua sede del Banco de València
+            { nombreParada: "Antigua sede del Banco de València", lat: 39.47061, lon: -0.37408, radio: 10,
+              waypoints: [{ lat: 39.47119, lon: -0.37423 }],
+              imagen: "img/banco_valencia.jpg" }, 
+            
             // PARADA 22: Iglesia de San Juan de la Cruz
-            { nombreParada: "Iglesia de San Juan de la Cruz", lat: 39.47214, lon: -0.37446, radio: 15 },
+            { nombreParada: "Iglesia de San Juan de la Cruz", lat: 39.47214, lon: -0.37446, radio: 15,
+              waypoints: [],
+              imagen: "img/san_juan_cruz.jpg" }, 
+            
             // PARADA 23: Palacio del Marqués de Dos Aguas (Museo Nacional de Cerámica)
-            { nombreParada: "Palacio del Marqués de Dos Aguas (Museo Nacional de Cerámica)", lat: 39.47276, lon: -0.37467, radio: 15 },
+            { nombreParada: "Palacio del Marqués de Dos Aguas (Museo Nacional de Cerámica)", lat: 39.47276, lon: -0.37467, radio: 15,
+              waypoints: [
+                  { lat: 39.47311, lon: -0.37589 }, // Waypoint 12
+                  { lat: 39.47261, lon: -0.37654 }, // Waypoint 13
+                  { lat: 39.47265, lon: -0.37725 }  // Waypoint 14
+              ],
+              imagen: "img/palacio_dos_aguas.jpg" }, 
+            
             // PARADA 24: Mercado Central
-            { nombreParada: "Mercado Central", lat: 39.47377, lon: -0.37832, radio: 20 },
+            { nombreParada: "Mercado Central", lat: 39.47377, lon: -0.37832, radio: 20,
+              waypoints: [],
+              imagen: "img/mercado_central.jpg" }, 
+            
             // PARADA 25: San Juan del Mercado (Iglesia de los Santos Juanes)
-            { nombreParada: "San Juan del Mercado (Iglesia de los Santos Juanes)", lat: 39.47425, lon: -0.37895, radio: 15 },
+            { nombreParada: "San Juan del Mercado (Iglesia de los Santos Juanes)", lat: 39.47425, lon: -0.37895, radio: 15,
+              waypoints: [],
+              imagen: "img/santos_juanes.jpg" }, 
+            
             // PARADA 26: Lonja de València (Mercado de la Seda)
-            { nombreParada: "Lonja de València (Mercado de la Seda)", lat: 39.47426, lon: -0.37862, radio: 20 },
+            { nombreParada: "Lonja de València (Mercado de la Seda)", lat: 39.47426, lon: -0.37862, radio: 20,
+              waypoints: [{ lat: 39.47459, lon: -0.37868 }],
+              imagen: "img/lonja_seda.jpg" }, 
+            
             // PARADA 27: Plaza del Doctor Collado
-            { nombreParada: "Plaza del Doctor Collado", lat: 39.47444, lon: -0.3779, radio: 10 },
+            { nombreParada: "Plaza del Doctor Collado", lat: 39.47444, lon: -0.3779, radio: 10,
+              waypoints: [{ lat: 39.47521, lon: -0.37766 }],
+              imagen: "img/plaza_collado.jpg" }, 
+            
             // PARADA 28: Plaza del Negrito (Fuente del Negrito)
-            { nombreParada: "Plaza del Negrito (Fuente del Negrito)", lat: 39.47611, lon: -0.37741, radio: 10 },
+            { nombreParada: "Plaza del Negrito (Fuente del Negrito)", lat: 39.47611, lon: -0.37741, radio: 10,
+              waypoints: [],
+              imagen: "img/fuente_negrito.jpg" }, 
+            
             // PARADA 29: Calle Caballeros
-            { nombreParada: "Calle Caballeros", lat: 39.47663, lon: -0.3773, radio: 10 },
+            { nombreParada: "Calle Caballeros", lat: 39.47663, lon: -0.3773, radio: 10,
+              waypoints: [],
+              imagen: "img/calle_caballeros.jpg" }, 
+            
             // PARADA 30: Palacio de la Generalitat
-            { nombreParada: "Palacio de la Generalitat", lat: 39.47668, lon: -0.37671, radio: 10 },
+            { nombreParada: "Palacio de la Generalitat", lat: 39.47668, lon: -0.37671, radio: 10,
+              waypoints: [],
+              imagen: "img/palacio_generalitat.jpg" }, 
+            
             // PARADA 31: Calle Serranos (Fin de la aventura)
-            { nombreParada: "Calle Serranos (Fin de la aventura)", lat: 39.47774, lon: -0.37671, radio: 15 }
+            { nombreParada: "Calle Serranos (Fin de la aventura)", lat: 39.47774, lon: -0.37671, radio: 15,
+              waypoints: [],
+              imagen: "img/fin_aventura.jpg" } 
         ];
 
         function initMap() {
@@ -135,7 +347,7 @@
                 polylineOptions: {
                     strokeColor: '#0077cc', // Color de la ruta
                     strokeOpacity: 0.8,
-                    strokeWeight: 6
+                    strokeWeight: 6 // Los bordes deben ser siempre de igual grosor.
                 }
             });
 
@@ -143,9 +355,27 @@
             overlay.textContent = 'Esperando instrucciones del padre...';
 
             // *** IMPORTANTE: Enviamos las paradas al padre al cargarse ***
-            // El padre recibirá este mensaje y podrá usar 'event.data.paradas'
-            // para construir su secuenciaAventura o actualizarla.
             window.parent.postMessage({ type: "gps-hijo-listo", paradas: paradasAventura }, "*");
+
+            // Añadir event listeners para el botón de la cámara y el botón de cerrar
+            cameraButton.addEventListener('click', showDestinationImage);
+            closeImageButton.addEventListener('click', hideDestinationImage);
+            
+            // Listener para cuando la imagen termina de cargar
+            destinationImage.addEventListener('load', () => {
+                imageSpinner.style.display = 'none'; // Ocultar spinner
+                destinationImage.style.display = 'block'; // Mostrar imagen
+                closeImageButton.style.display = 'block'; // Mostrar botón de cerrar
+            });
+
+            // Manejo de errores de carga de imagen
+            destinationImage.addEventListener('error', () => {
+                imageSpinner.style.display = 'none'; // Ocultar spinner
+                destinationImage.style.display = 'none'; // Asegurarse de que la imagen no se muestre si hay error
+                closeImageButton.style.display = 'block'; // Mostrar botón de cerrar para que el usuario pueda cerrar el modal
+                console.error("Error al cargar la imagen: " + destinationImage.src);
+                alert("No se pudo cargar la imagen del destino.");
+            });
         }
 
         // Función para calcular la distancia entre dos puntos (fórmula de Haversine)
@@ -173,6 +403,13 @@
 
             arrivalSent = false; // Resetear la bandera de llegada para la nueva parada
 
+            // Mostrar el botón de la cámara si hay un currentTarget
+            if (currentTarget) {
+                cameraButton.style.display = 'flex'; // Mostrarlo
+            } else {
+                cameraButton.style.display = 'none'; // Ocultarlo si no hay destino activo
+            }
+
             watchId = navigator.geolocation.watchPosition((position) => {
                 const userLat = position.coords.latitude;
                 const userLon = position.coords.longitude;
@@ -182,11 +419,22 @@
                 if (currentTarget) {
                     overlay.textContent = `Dirígete a: ${currentTarget.nombreParada || 'Destino'}. Calculando ruta...`;
 
-                    directionsService.route({
+                    const requestOptions = {
                         origin: new google.maps.LatLng(userLat, userLon),
                         destination: new google.maps.LatLng(currentTarget.lat, currentTarget.lon),
-                        travelMode: google.maps.TravelMode.WALKING // ¡Modo a pie!
-                    }, (response, status) => {
+                        travelMode: google.maps.TravelMode.WALKING // Confirmado: siempre andando
+                    };
+
+                    // Si el currentTarget (obtenido del array paradasAventura) tiene waypoints, los añade a la solicitud
+                    if (currentTarget.waypoints && currentTarget.waypoints.length > 0) {
+                        requestOptions.waypoints = currentTarget.waypoints.map(wp => ({
+                            location: new google.maps.LatLng(wp.lat, wp.lon),
+                            stopover: false // Asumimos que son puntos de paso, no paradas
+                        }));
+                        requestOptions.optimizeWaypoints = false; // Mantiene el orden de los waypoints
+                    }
+
+                    directionsService.route(requestOptions, (response, status) => {
                         if (status === 'OK') {
                             directionsRenderer.setDirections(response);
                             const leg = response.routes[0].legs[0];
@@ -200,6 +448,7 @@
                                 arrivalSent = true; // Marcar que el mensaje de llegada ya se envió
                                 navigator.geolocation.clearWatch(watchId); // Detener la observación hasta la siguiente parada
                                 watchId = null; // Reiniciar el ID del observador
+                                cameraButton.style.display = 'none'; // Ocultar el botón de cámara al llegar
                             }
                         } else {
                             // Si no se puede calcular la ruta con Directions API, usamos la distancia directa
@@ -213,11 +462,13 @@
                                 arrivalSent = true;
                                 navigator.geolocation.clearWatch(watchId);
                                 watchId = null;
+                                cameraButton.style.display = 'none'; // Ocultar el botón de cámara al llegar
                             }
                         }
                     });
                 } else {
                     overlay.textContent = 'Ubicación actual: ' + userLat.toFixed(5) + ', ' + userLon.toFixed(5) + '\nEsperando destino...';
+                    cameraButton.style.display = 'none'; // Ocultar el botón si no hay un destino activo
                 }
 
             }, (error) => {
@@ -243,6 +494,7 @@
                     navigator.geolocation.clearWatch(watchId);
                     watchId = null;
                 }
+                cameraButton.style.display = 'none'; // Ocultar el botón si hay error grave
             }, {
                 enableHighAccuracy: true,
                 maximumAge: 0,
@@ -250,27 +502,50 @@
             });
         }
 
+        // Función para mostrar la imagen del destino actual
+        function showDestinationImage() {
+            if (currentTarget && currentTarget.imagen) {
+                imageSpinner.style.display = 'block'; // Mostrar spinner
+                destinationImage.style.display = 'none'; // Ocultar imagen mientras carga
+                closeImageButton.style.display = 'none'; // Ocultar botón de cerrar mientras carga
+                destinationImage.src = currentTarget.imagen; 
+                imageModalOverlay.style.display = 'flex'; // Mostrar la superposición
+            } else {
+                alert('No hay imagen disponible para este destino.');
+                imageModalOverlay.style.display = 'none'; // Asegurarse de que el modal esté oculto
+            }
+        }
+
+        // Función para ocultar la imagen del destino
+        function hideDestinationImage() {
+            imageModalOverlay.style.display = 'none'; // Ocultar la superposición
+            destinationImage.src = ''; // Limpiar la imagen para ahorrar memoria
+            imageSpinner.style.display = 'none'; // Asegurarse de que el spinner también esté oculto
+            destinationImage.style.display = 'none'; // Resetear estado de la imagen
+            closeImageButton.style.display = 'none'; // Resetear estado del botón
+        }
+
         // Listener para mensajes del padre
         window.addEventListener("message", (event) => {
-            // Es buena práctica verificar el origen en producción
-            // if (event.origin !== "https://tu-dominio.com") return; // Reemplaza con tu dominio
+            // En producción, es buena práctica verificar el origen:
+            // if (event.origin !== "https://tu-dominio.com") return; 
 
             if (event.data && event.data.type === "irA_coordenadas") {
-                currentTarget = {
-                    lat: event.data.lat,
-                    lon: event.data.lon,
-                    radio: event.data.radio,
-                    nombreParada: event.data.nombreParada // El nombre de la parada viene del padre
-                };
-                console.log("Mensaje 'irA_coordenadas' recibido del padre:", currentTarget);
-                // Iniciar la observación de la ubicación para la nueva parada
-                watchUserPosition(); 
+                const paradaIndex = event.data.paradaIndex;
+                if (paradaIndex !== undefined && paradasAventura[paradaIndex]) {
+                    currentTarget = paradasAventura[paradaIndex];
+                    console.log("Mensaje 'irA_coordenadas' recibido del padre. Destino:", currentTarget.nombreParada);
+                    watchUserPosition(); 
+                    // Mostrar el botón de la cámara cuando se recibe una nueva instrucción de coordenadas
+                    cameraButton.style.display = 'flex'; 
+                } else {
+                    console.error("Mensaje 'irA_coordenadas' recibido con índice de parada inválido:", paradaIndex);
+                    overlay.textContent = "Error: Destino no encontrado.";
+                    cameraButton.style.display = 'none'; // Ocultar el botón si hay un error
+                }
             }
         });
-
-        // Carga la API de Google Maps y llama a initMap una vez que esté lista.
-        // ¡REEMPLAZA 'TU_API_KEY' CON TU CLAVE DE API DE GOOGLE MAPS REAL!
     </script>
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=TU_API_KEY&callback=initMap"></script>
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAEnp4tztSd_Ay3USjdf5JKz0GbucCG0WQ&callback=initMap"></script>
 </body>
 </html>
