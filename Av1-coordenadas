@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aventura 1: Navegación por Coordenadas</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden; /* Evita barras de desplazamiento */
+        }
+        #map {
+            height: 100vh; /* Ocupa el 100% de la altura de la ventana */
+            width: 100vw; /* Ocupa el 100% de la anchura de la ventana */
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #message-overlay {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            z-index: 10;
+            font-size: 0.9em;
+            text-align: center;
+            display: none; /* Oculto por defecto */
+            max-width: 90%;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="message-overlay">Cargando ubicación...</div>
+
+    <script>
+        let map;
+        let directionsService;
+        let directionsRenderer;
+        let currentTarget = null; // {lat, lon, radio, nombreParada}
+        let watchId; // Para almacenar el ID del observador de geolocalización
+        let arrivalSent = false; // Bandera para evitar enviar el mensaje de llegada múltiples veces
+
+        const overlay = document.getElementById('message-overlay');
+
+        // --- LISTA DE PARADAS PARA LA AVENTURA 1 ---
+        // Puedes cambiar, añadir o eliminar paradas aquí.
+        // Asegúrate de que las coordenadas (lat, lon) y el radio (en metros) sean correctos.
+        // Los radios los he establecido de forma estimada, puedes ajustarlos.
+        const paradasAventura = [
+            // PARADA 0: Inicio Torres de Serranos - Plaza de los Fueros
+            { nombreParada: "Torres de Serranos - Plaza de los Fueros (Inicio)", lat: 39.47876, lon: -0.37626, radio: 20 },
+            // PARADA 1: Puente de Serranos – Plaza de la Crida
+            { nombreParada: "Puente de Serranos – Plaza de la Crida", lat: 39.47959, lon: -0.37583, radio: 20 },
+            // PARADA 2: Calle Muro Santa Ana
+            { nombreParada: "Calle Muro Santa Ana", lat: 39.47866, lon: -0.3747, radio: 15 },
+            // PARADA 3: Cortes Valencianas (Palacio de los Borgia)
+            { nombreParada: "Cortes Valencianas (Palacio de los Borgia)", lat: 39.47785, lon: -0.37485, radio: 15 },
+            // PARADA 4: Iglesia de San Lorenzo
+            { nombreParada: "Iglesia de San Lorenzo", lat: 39.47768, lon: -0.3749, radio: 15 },
+            // PARADA 5: Plaza de la Virgen
+            { nombreParada: "Plaza de la Virgen", lat: 39.47656, lon: -0.37529, radio: 25 },
+            // PARADA 6: Plaza de la Almoína
+            { nombreParada: "Plaza de la Almoína", lat: 39.47609, lon: -0.37449, radio: 15 },
+            // PARADA 7: Catedral de València
+            { nombreParada: "Catedral de València", lat: 39.47594, lon: -0.37474, radio: 10 },
+            // PARADA 8: Plaza Decimo Juno Bruto (Museo Arqueológico de la Almoína)
+            { nombreParada: "Plaza Decimo Juno Bruto (Museo Arqueológico de la Almoína)", lat: 39.4762, lon: -0.37412, radio: 15 },
+            // PARADA 9: Basílica de València
+            { nombreParada: "Basílica de València", lat: 39.47611, lon: -0.37478, radio: 10 },
+            // PARADA 10: Casa del Punt de Gantxo
+            { nombreParada: "Casa del Punt de Gantxo", lat: 39.47603, lon: -0.37433, radio: 10 },
+            // PARADA 11: Palacio Arzobispal
+            { nombreParada: "Palacio Arzobispal", lat: 39.4755, lon: -0.37436, radio: 10 },
+            // PARADA 12: Puerta Románica de la Catedral
+            { nombreParada: "Puerta Románica de la Catedral", lat: 39.4756, lon: -0.37466, radio: 10 },
+            // PARADA 13: Torre del Miguelete
+            { nombreParada: "Torre del Miguelete", lat: 39.47533, lon: -0.37563, radio: 10 },
+            // PARADA 14: Plaza del Ayuntamiento
+            { nombreParada: "Plaza del Ayuntamiento", lat: 39.47056, lon: -0.37677, radio: 20 },
+            // PARADA 15: Edificio del Ayuntamiento de València
+            { nombreParada: "Edificio del Ayuntamiento de València", lat: 39.46971, lon: -0.37693, radio: 15 },
+            // PARADA 16: Estación de Ferrocarril (Estación del Norte)
+            { nombreParada: "Estación de Ferrocarril (Estación del Norte)", lat: 39.46722, lon: -0.37702, radio: 30 },
+            // PARADA 17: Plaza de Toros de València
+            { nombreParada: "Plaza de Toros de València", lat: 39.46709, lon: -0.37595, radio: 30 },
+            // PARADA 18: Casa estilo Árabe
+            { nombreParada: "Casa estilo Árabe", lat: 39.46753, lon: -0.37511, radio: 15 },
+            // PARADA 19: Palacio de Comunicaciones (Correos)
+            { nombreParada: "Palacio de Comunicaciones (Correos)", lat: 39.46942, lon: -0.37559, radio: 10 },
+            // PARADA 20: Antigua sede del Banco de València
+            { nombreParada: "Antigua sede del Banco de València", lat: 39.47061, lon: -0.37408, radio: 10 },
+            // PARADA 21: Edificio Suay (La Equitativa)
+            { nombreParada: "Edificio Suay (La Equitativa)", lat: 39.4699, lon: -0.37573, radio: 10 },
+            // PARADA 22: Iglesia de San Juan de la Cruz
+            { nombreParada: "Iglesia de San Juan de la Cruz", lat: 39.47214, lon: -0.37446, radio: 15 },
+            // PARADA 23: Palacio del Marqués de Dos Aguas (Museo Nacional de Cerámica)
+            { nombreParada: "Palacio del Marqués de Dos Aguas (Museo Nacional de Cerámica)", lat: 39.47276, lon: -0.37467, radio: 15 },
+            // PARADA 24: Mercado Central
+            { nombreParada: "Mercado Central", lat: 39.47377, lon: -0.37832, radio: 20 },
+            // PARADA 25: San Juan del Mercado (Iglesia de los Santos Juanes)
+            { nombreParada: "San Juan del Mercado (Iglesia de los Santos Juanes)", lat: 39.47425, lon: -0.37895, radio: 15 },
+            // PARADA 26: Lonja de València (Mercado de la Seda)
+            { nombreParada: "Lonja de València (Mercado de la Seda)", lat: 39.47426, lon: -0.37862, radio: 20 },
+            // PARADA 27: Plaza del Doctor Collado
+            { nombreParada: "Plaza del Doctor Collado", lat: 39.47444, lon: -0.3779, radio: 10 },
+            // PARADA 28: Plaza del Negrito (Fuente del Negrito)
+            { nombreParada: "Plaza del Negrito (Fuente del Negrito)", lat: 39.47611, lon: -0.37741, radio: 10 },
+            // PARADA 29: Calle Caballeros
+            { nombreParada: "Calle Caballeros", lat: 39.47663, lon: -0.3773, radio: 10 },
+            // PARADA 30: Palacio de la Generalitat
+            { nombreParada: "Palacio de la Generalitat", lat: 39.47668, lon: -0.37671, radio: 10 },
+            // PARADA 31: Calle Serranos (Fin de la aventura)
+            { nombreParada: "Calle Serranos (Fin de la aventura)", lat: 39.47774, lon: -0.37671, radio: 15 }
+        ];
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 39.4700, lng: -0.3760 }, // Centro inicial en Valencia
+                zoom: 15,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false
+            });
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map,
+                polylineOptions: {
+                    strokeColor: '#0077cc', // Color de la ruta
+                    strokeOpacity: 0.8,
+                    strokeWeight: 6
+                }
+            });
+
+            overlay.style.display = 'block';
+            overlay.textContent = 'Esperando instrucciones del padre...';
+
+            // *** IMPORTANTE: Enviamos las paradas al padre al cargarse ***
+            // El padre recibirá este mensaje y podrá usar 'event.data.paradas'
+            // para construir su secuenciaAventura o actualizarla.
+            window.parent.postMessage({ type: "gps-hijo-listo", paradas: paradasAventura }, "*");
+        }
+
+        // Función para calcular la distancia entre dos puntos (fórmula de Haversine)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Radio de la Tierra en metros
+            const φ1 = lat1 * Math.PI / 180; // lat1 en radianes
+            const φ2 = lat2 * Math.PI / 180; // lat2 en radianes
+            const Δφ = (lat2 - lat1) * Math.PI / 180; // Diferencia de latitud en radianes
+            const Δλ = (lon2 - lon1) * Math.PI / 180; // Diferencia de longitud en radianes
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c; // Distancia en metros
+        }
+
+        // Función para obtener la ubicación del usuario y actualizar el mapa/ruta
+        function watchUserPosition() {
+            // Limpiar el observador anterior si ya existe para evitar duplicados
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+
+            arrivalSent = false; // Resetear la bandera de llegada para la nueva parada
+
+            watchId = navigator.geolocation.watchPosition((position) => {
+                const userLat = position.coords.latitude;
+                const userLon = position.coords.longitude;
+
+                map.setCenter({ lat: userLat, lng: userLon }); // Centrar el mapa en el usuario
+
+                if (currentTarget) {
+                    overlay.textContent = `Dirígete a: ${currentTarget.nombreParada || 'Destino'}. Calculando ruta...`;
+
+                    directionsService.route({
+                        origin: new google.maps.LatLng(userLat, userLon),
+                        destination: new google.maps.LatLng(currentTarget.lat, currentTarget.lon),
+                        travelMode: google.maps.TravelMode.WALKING // ¡Modo a pie!
+                    }, (response, status) => {
+                        if (status === 'OK') {
+                            directionsRenderer.setDirections(response);
+                            const leg = response.routes[0].legs[0];
+                            const distance = leg.distance.value; // Distancia en metros
+                            const duration = leg.duration.text; // Duración legible
+                            overlay.textContent = `Dirígete a: ${currentTarget.nombreParada || 'Destino'}.\nDistancia: ${leg.distance.text} (${duration})`;
+                            
+                            if (distance <= currentTarget.radio && !arrivalSent) {
+                                overlay.textContent = `¡Has llegado a ${currentTarget.nombreParada || 'Destino'}!`;
+                                window.parent.postMessage({ type: "coordenadas-completadas", parada: currentTarget.nombreParada }, "*");
+                                arrivalSent = true; // Marcar que el mensaje de llegada ya se envió
+                                navigator.geolocation.clearWatch(watchId); // Detener la observación hasta la siguiente parada
+                                watchId = null; // Reiniciar el ID del observador
+                            }
+                        } else {
+                            // Si no se puede calcular la ruta con Directions API, usamos la distancia directa
+                            const directDistance = calculateDistance(userLat, userLon, currentTarget.lat, currentTarget.lon);
+                            overlay.textContent = `Dirígete a: ${currentTarget.nombreParada || 'Destino'}.\nDistancia: ${directDistance.toFixed(0)}m (ruta no disponible)`;
+                            console.error('Directions request failed due to ' + status + '. Calculando distancia directa.');
+                            
+                            if (directDistance <= currentTarget.radio && !arrivalSent) {
+                                overlay.textContent = `¡Has llegado a ${currentTarget.nombreParada || 'Destino'}!`;
+                                window.parent.postMessage({ type: "coordenadas-completadas", parada: currentTarget.nombreParada }, "*");
+                                arrivalSent = true;
+                                navigator.geolocation.clearWatch(watchId);
+                                watchId = null;
+                            }
+                        }
+                    });
+                } else {
+                    overlay.textContent = 'Ubicación actual: ' + userLat.toFixed(5) + ', ' + userLon.toFixed(5) + '\nEsperando destino...';
+                }
+
+            }, (error) => {
+                console.error('Error de geolocalización:', error);
+                let errorMessage = 'Error de ubicación: ';
+                switch(error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorMessage += 'Permiso denegado. Habilita la ubicación en tu navegador.';
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorMessage += 'Ubicación no disponible.';
+                        break;
+                    case error.TIMEOUT:
+                        errorMessage += 'Tiempo de espera agotado. Intenta de nuevo.';
+                        break;
+                    case error.UNKNOWN_ERROR:
+                        errorMessage += 'Error desconocido.';
+                        break;
+                }
+                overlay.textContent = errorMessage + '\nRecarga la página y acepta el permiso.';
+                window.parent.postMessage({ type: "coordenadas-error", error: errorMessage }, "*");
+                if (watchId) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                }
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 10000
+            });
+        }
+
+        // Listener para mensajes del padre
+        window.addEventListener("message", (event) => {
+            // Es buena práctica verificar el origen en producción
+            // if (event.origin !== "https://tu-dominio.com") return; // Reemplaza con tu dominio
+
+            if (event.data && event.data.type === "irA_coordenadas") {
+                currentTarget = {
+                    lat: event.data.lat,
+                    lon: event.data.lon,
+                    radio: event.data.radio,
+                    nombreParada: event.data.nombreParada // El nombre de la parada viene del padre
+                };
+                console.log("Mensaje 'irA_coordenadas' recibido del padre:", currentTarget);
+                // Iniciar la observación de la ubicación para la nueva parada
+                watchUserPosition(); 
+            }
+        });
+
+        // Carga la API de Google Maps y llama a initMap una vez que esté lista.
+        // ¡REEMPLAZA 'TU_API_KEY' CON TU CLAVE DE API DE GOOGLE MAPS REAL!
+    </script>
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=TU_API_KEY&callback=initMap"></script>
+</body>
+</html>
